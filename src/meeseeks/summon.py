@@ -26,6 +26,11 @@ def summon(
     Summon a meeseeks. Routes to inline (thinker) or subprocess (worker/heavy)
     based on meeseeks_cls.isolation.
     """
+    # Guard: verify class is actually registered — catches callers that pass
+    # a bare string name or a stub object with no proper registration.
+    if not hasattr(meeseeks_cls, "name") or not meeseeks_cls.name:
+        return MeeseeksResult.failure(reason="summon() called with unregistered or unnamed meeseeks class")
+
     if provider is None:
         provider = OpenRouterProvider()
 
