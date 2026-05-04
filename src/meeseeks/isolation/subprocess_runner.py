@@ -1,20 +1,23 @@
 from __future__ import annotations
 import importlib
-import multiprocessing
 import time
-
-WORKER_SEM = multiprocessing.Semaphore(5)
-THINKER_SEM = multiprocessing.Semaphore(20)
 
 
 def _worker_entry(
     meeseeks_cls_module: str,
     meeseeks_cls_name: str,
     inputs_json: str,
-    result_queue: multiprocessing.Queue,
+    result_queue,   # multiprocessing.Queue — typed loosely to avoid pickle issues
     api_key: str,
     extra_sys_path: list[str] | None = None,
 ) -> None:
+    """
+    Subprocess worker entry point (§3.2).
+
+    No semaphore here — the parent acquires the semaphore before spawning
+    and releases it after the process exits. This is the only pickle-safe
+    approach with multiprocessing.spawn.
+    """
     if extra_sys_path:
         import sys
         for p in reversed(extra_sys_path):

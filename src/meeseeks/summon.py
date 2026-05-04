@@ -92,6 +92,29 @@ def _summon_inline(
     return result
 
 
+# Module-level semaphores created once — multiprocessing.Semaphore uses OS primitives
+# and IS shared across spawned children when passed explicitly as an argument.
+# (Module-level globals are NOT shared with spawn — OS semaphores passed via args ARE.)
+import threading as _threading
+_SPAWN_CTX = None
+_WORKER_SEM = None
+_THINKER_SEM = None
+_SEM_INIT_LOCK = _threading.Lock()
+
+
+def _get_semaphore(tier: str):
+    """Return (or lazily create) the shared semaphore for this tier. Thread-safe."""
+    global _SPAWN_CTX, _WORKER_SEM, _THINKER_SEM
+    if _SPAWN_CTX is None:
+        with _SEM_INIT_LOCK:
+            if _SPAWN_CTX is None:
+                import multiprocessing
+                _SPAWN_CTX = multiprocessing.get_context("spawn")
+                _WORKER_SEM = _SPAWN_CTX.Semaphore(5)
+                _THINKER_SEM = _SPAWN_CTX.Semaphore(20)
+    return _THINKER_SEM if tier == "thinker" else _WORKER_SEM
+
+
 def _summon_subprocess(
     meeseeks_cls: Type[Meeseeks],
     inputs: Meeseeks.Input,
@@ -101,19 +124,27 @@ def _summon_subprocess(
 
     The meeseeks class must be importable by module path (defined at module level).
     API key is passed explicitly — spawn does not inherit parent env vars.
+    Semaphore is created in parent from spawn context and passed to child —
+    this is the correct way to share a semaphore with spawned processes.
     """
     import os
-    import multiprocessing
     import queue as queue_mod
+    import uuid
     from meeseeks.isolation.subprocess_runner import _worker_entry
     import sys
 
     api_key = os.environ.get("OPENROUTER_API_KEY", "")
-    ctx = multiprocessing.get_context("spawn")
+    sem = _get_semaphore(meeseeks_cls.tier)
+    ctx = _SPAWN_CTX
     result_queue = ctx.Queue()
 
     # Pass sys.path so the subprocess can find the src/ layout
     extra_sys_path = [p for p in sys.path if p]
+
+    # Generate spawn_id in parent for consistent SPAWN/COMPLETE logging
+    spawn_id = uuid.uuid4().hex[:8]
+    log_spawn(spawn_id, meeseeks_cls.name, meeseeks_cls.tier,
+              meeseeks_cls.estimated_cost_usd, inputs.model_dump_json()[:120])
 
     proc = ctx.Process(
         target=_worker_entry,
@@ -127,40 +158,44 @@ def _summon_subprocess(
         ),
         daemon=True,  # auto-cleanup if parent dies
     )
+
+    # Acquire semaphore in parent before spawning — blocks here when at cap.
+    # Release is guaranteed via try/finally regardless of child outcome.
+    sem.acquire()
     start = time.monotonic()
-    proc.start()
+    try:
+        proc.start()
+        # Timeout = meeseeks deadline. If child blocks on API, this fires first.
+        proc.join(timeout=meeseeks_cls.timeout_seconds)
+        duration_ms = int((time.monotonic() - start) * 1000)
 
-    # Wait for timeout
-    proc.join(timeout=meeseeks_cls.timeout_seconds)
-    duration_ms = int((time.monotonic() - start) * 1000)
+        if proc.is_alive():
+            proc.kill()
+            proc.join(3)
+            result = MeeseeksResult.timeout()
+        elif proc.exitcode is not None and proc.exitcode < 0:
+            result = MeeseeksResult.failure(
+                reason=f"worker killed by signal {-proc.exitcode}",
+            )
+        else:
+            try:
+                raw = result_queue.get(timeout=2)
+                result = MeeseeksResult.model_validate(raw)
+                if result.status == "success" and isinstance(result.data, dict):
+                    result = result.model_copy(
+                        update={"data": meeseeks_cls.Output.model_validate(result.data)}
+                    )
+            except queue_mod.Empty:
+                result = MeeseeksResult.failure(reason="worker exited without result")
+    finally:
+        sem.release()   # always returns slot — no leak on timeout, crash, or signal
 
-    if proc.is_alive():
-        # Timed out — kill and return timeout envelope
-        proc.kill()
-        proc.join(3)
-        result = MeeseeksResult.timeout()
-    elif proc.exitcode is not None and proc.exitcode < 0:
-        # Killed by signal (crash / segfault)
-        result = MeeseeksResult.failure(
-            reason=f"worker killed by signal {-proc.exitcode}",
-        )
-    else:
-        # Try to get result from queue
-        try:
-            raw = result_queue.get(timeout=2)
-            # Reconstruct MeeseeksResult — re-parse data with the Output schema
-            # (Generic[T] is erased at runtime so model_validate leaves data as dict)
-            result = MeeseeksResult.model_validate(raw)
-            if result.status == "success" and isinstance(result.data, dict):
-                result = result.model_copy(
-                    update={"data": meeseeks_cls.Output.model_validate(result.data)}
-                )
-        except queue_mod.Empty:
-            result = MeeseeksResult.failure(reason="worker exited without result")
-
-    # Stamp duration on success if worker didn't set it (worker sets its own)
+    # Stamp spawn_id + duration
+    result = result.model_copy(update={"meeseeks_id": spawn_id})
     if result.status == "success" and result.duration_ms == 0:
         result = result.model_copy(update={"duration_ms": duration_ms})
+
+    log_complete(spawn_id, result.status, result.cost.cost_usd, result.duration_ms)
 
     record_run(
         meeseeks_name=meeseeks_cls.name,
