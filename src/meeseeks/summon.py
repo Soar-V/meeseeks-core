@@ -3,7 +3,8 @@ import time
 from typing import Type, TypeVar
 from pydantic import BaseModel
 
-from meeseeks.contracts import MeeseeksResult, TokenUsage, StructuredOutputParser
+from meeseeks.contracts import MeeseeksResult, TokenUsage
+from meeseeks.parser import StructuredOutputParser
 from meeseeks.framework_prompt import FRAMEWORK_PROMPT
 from meeseeks.providers.openrouter import OpenRouterProvider
 from meeseeks.registry import Meeseeks
