@@ -9,6 +9,7 @@ from meeseeks.framework_prompt import FRAMEWORK_PROMPT
 from meeseeks.providers.openrouter import OpenRouterProvider
 from meeseeks.registry import Meeseeks
 from meeseeks.budget import record_run
+from meeseeks.discord_logger import log_spawn, log_complete
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -50,6 +51,13 @@ def _summon_inline(
         {"role": "user", "content": user_msg},
     ]
 
+    # Generate a meeseeks_id early so it appears in SPAWN log
+    import uuid
+    spawn_id = uuid.uuid4().hex[:8]
+
+    log_spawn(spawn_id, meeseeks_cls.name, meeseeks_cls.tier,
+              meeseeks_cls.estimated_cost_usd, inputs.model_dump_json()[:120])
+
     parser = StructuredOutputParser(
         schema=meeseeks_cls.Output,
         provider=provider,
@@ -68,6 +76,10 @@ def _summon_inline(
         )
     else:
         result = MeeseeksResult.success(data=parsed, cost=usage, duration_ms=duration_ms)
+
+    # Stamp spawn_id onto result so budget + logs share the same ID
+    result = result.model_copy(update={"meeseeks_id": spawn_id})
+    log_complete(spawn_id, result.status, result.cost.cost_usd, result.duration_ms)
 
     record_run(
         meeseeks_name=meeseeks_cls.name,
