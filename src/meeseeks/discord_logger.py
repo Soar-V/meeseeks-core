@@ -89,12 +89,32 @@ class _DiscordLogger:
         """Send one or more Discord messages from batched lines."""
         if not lines:
             return
+        chunks = _split_into_chunks("\n".join(lines), MAX_MESSAGE_CHARS)
+
+        # Prefer bot channel (discord.py TextChannel) over webhook
+        from meeseeks.discord_logger import _bot_channel
+        if _bot_channel is not None:
+            import asyncio
+            loop = None
+            try:
+                loop = _bot_channel._state.loop  # type: ignore[attr-defined]
+            except AttributeError:
+                pass
+            if loop and loop.is_running():
+                for chunk in chunks:
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            _bot_channel.send(f"```\n{chunk}\n```"), loop
+                        ).result(timeout=8)
+                    except Exception:
+                        pass  # debug logger must never crash the parent
+                return
+
+        # Fallback: webhook
         url = DISCORD_WEBHOOK_URL or os.environ.get("MEESEEKS_DEBUG_WEBHOOK")
         if not url:
-            return  # no webhook configured — silent drop
+            return  # no channel or webhook configured — silent drop
 
-        # Split into ≤MAX_MESSAGE_CHARS chunks
-        chunks = _split_into_chunks("\n".join(lines), MAX_MESSAGE_CHARS)
         for chunk in chunks:
             try:
                 with httpx.Client(timeout=5) as client:
@@ -148,6 +168,22 @@ def init(webhook_url: str) -> None:
     global DISCORD_WEBHOOK_URL
     DISCORD_WEBHOOK_URL = webhook_url
     _get_logger()  # start background thread now
+
+
+# Module-level bot channel (set by Julius bot after on_ready)
+_bot_channel = None  # discord.TextChannel | None
+
+
+def set_bot_channel(channel) -> None:
+    """
+    Wire a discord.py TextChannel as the firehose destination.
+    Called by Julius bot.py after on_ready. When set, posts via bot
+    (no webhook needed — uses channel.send directly from the logger thread
+    via asyncio.run_coroutine_threadsafe).
+    """
+    global _bot_channel
+    _bot_channel = channel
+    _get_logger()  # ensure background thread is running
 
 
 def log_event(
