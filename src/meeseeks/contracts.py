@@ -47,10 +47,10 @@ from pydantic import ValidationError
 class StructuredOutputParser:
     """§4.4: try parse → retry with validation error → structured failure"""
 
-    def __init__(self, schema: type[BaseModel], provider, model: str):
+    def __init__(self, schema: type[BaseModel], provider, tier: str = "worker"):
         self.schema = schema
         self.provider = provider
-        self.model = model
+        self.tier = tier  # use the meeseeks's actual tier, not always "worker"
 
     def parse_with_retry(
         self, messages: list[dict], timeout_seconds: int = 120
@@ -63,7 +63,7 @@ class StructuredOutputParser:
 
         # Attempt 1
         content, usage, _ = self.provider.chat_with_fallback(
-            messages, tier="worker", schema=self.schema, timeout_seconds=timeout_seconds
+            messages, tier=self.tier, schema=self.schema, timeout_seconds=timeout_seconds
         )
         total_usage.prompt_tokens += usage.prompt_tokens
         total_usage.completion_tokens += usage.completion_tokens
@@ -74,16 +74,22 @@ class StructuredOutputParser:
         if parsed:
             return parsed, total_usage, None
 
-        # Attempt 2 — retry with validation error in context
+        # Attempt 2 — retry with validation error injected as a new user message
+        # Note: assistant content must be a string (serialize dicts)
+        assistant_content = json.dumps(content) if isinstance(content, dict) else str(content)
         retry_messages = messages + [
-            {"role": "assistant", "content": str(content)},
-            {"role": "user", "content": f"Your output failed validation: {err}\nReturn valid JSON matching the schema. No preamble."},
+            {"role": "assistant", "content": assistant_content},
+            {"role": "user", "content": (
+                f"Your output failed schema validation: {err}\n"
+                "Fix it and return valid JSON matching the required schema. No preamble, no explanation."
+            )},
         ]
         content2, usage2, _ = self.provider.chat_with_fallback(
-            retry_messages, tier="worker", schema=self.schema, timeout_seconds=timeout_seconds
+            retry_messages, tier=self.tier, schema=self.schema, timeout_seconds=timeout_seconds
         )
         total_usage.prompt_tokens += usage2.prompt_tokens
         total_usage.completion_tokens += usage2.completion_tokens
+        total_usage.total_tokens += usage2.total_tokens
         total_usage.cost_usd += usage2.cost_usd
 
         parsed2, err2 = self._try_parse(content2)

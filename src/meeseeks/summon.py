@@ -52,7 +52,7 @@ def _summon_inline(
     parser = StructuredOutputParser(
         schema=meeseeks_cls.Output,
         provider=provider,
-        model=meeseeks_cls.tier,
+        tier=meeseeks_cls.tier,
     )
 
     parsed, usage, failure_reason = parser.parse_with_retry(

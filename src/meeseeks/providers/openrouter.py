@@ -7,9 +7,20 @@ from meeseeks.providers.base import LLMProvider
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+
+def _strip_markdown_fences(text: str) -> str:
+    """Strip ```json ... ``` or ``` ... ``` wrappers that some models add."""
+    import re
+    stripped = text.strip()
+    # Match ```json\n...\n``` or ```\n...\n```
+    m = re.match(r"^```(?:json)?\s*\n?(.*?)\n?```\s*$", stripped, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return stripped
+
 TIER_MODELS = {
     "thinker": [
-        "anthropic/claude-haiku-4",
+        "anthropic/claude-haiku-4-5",          # claude-haiku-4-5 is the valid OR name
         "meta-llama/llama-3.1-70b-instruct",
         "google/gemini-flash-1.5",
     ],
@@ -58,6 +69,9 @@ class OpenRouterProvider(LLMProvider):
             cost_usd=cost_usd,
         )
         content = data["choices"][0]["message"]["content"]
+        # Some models wrap JSON in markdown fences even with json_object mode — strip them
+        if isinstance(content, str) and content.strip().startswith("```"):
+            content = _strip_markdown_fences(content)
         if schema is not None:
             try:
                 content = json.loads(content)
