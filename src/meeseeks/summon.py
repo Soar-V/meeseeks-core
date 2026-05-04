@@ -7,6 +7,7 @@ from meeseeks.contracts import MeeseeksResult, TokenUsage, StructuredOutputParse
 from meeseeks.framework_prompt import FRAMEWORK_PROMPT
 from meeseeks.providers.openrouter import OpenRouterProvider
 from meeseeks.registry import Meeseeks
+from meeseeks.budget import record_run
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -60,12 +61,22 @@ def _summon_inline(
     duration_ms = int((time.monotonic() - start) * 1000)
 
     if parsed is None:
-        return MeeseeksResult.failure(
+        result = MeeseeksResult.failure(
             reason=failure_reason or "parse failed",
             cost=usage,
         )
+    else:
+        result = MeeseeksResult.success(data=parsed, cost=usage, duration_ms=duration_ms)
 
-    return MeeseeksResult.success(data=parsed, cost=usage, duration_ms=duration_ms)
+    record_run(
+        meeseeks_name=meeseeks_cls.name,
+        meeseeks_id=result.meeseeks_id,
+        status=result.status,
+        cost=result.cost,
+        duration_ms=result.duration_ms,
+    )
+
+    return result
 
 
 def _summon_subprocess(
