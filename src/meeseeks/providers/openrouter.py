@@ -98,3 +98,61 @@ class OpenRouterProvider(LLMProvider):
                 last_exc = e
                 continue
         raise RuntimeError(f"All models in tier '{tier}' failed. Last: {last_exc}")
+
+    def chat_with_tools(
+        self,
+        messages: list[dict],
+        model: str,
+        tools: list[dict],
+        timeout_seconds: int = 120,
+    ) -> tuple[dict, TokenUsage]:
+        """Single turn with tools. Returns the full message dict (may contain tool_calls).
+
+        Response shape:
+          {"role": "assistant", "content": str|None, "tool_calls": [...]}
+        tool_calls items follow OpenAI format:
+          {"id": "...", "type": "function", "function": {"name": "...", "arguments": "{...}"}}
+        """
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        body: dict = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+        }
+        with httpx.Client(timeout=timeout_seconds) as client:
+            resp = client.post(OPENROUTER_API_URL, headers=headers, json=body)
+            resp.raise_for_status()
+            data = resp.json()
+
+        usage_raw = data.get("usage", {})
+        token_usage = TokenUsage(
+            prompt_tokens=usage_raw.get("prompt_tokens", 0),
+            completion_tokens=usage_raw.get("completion_tokens", 0),
+            total_tokens=usage_raw.get("total_tokens", 0),
+            cost_usd=float(usage_raw.get("cost", 0) or 0),
+        )
+        message = data["choices"][0]["message"]
+        return message, token_usage
+
+    def chat_with_tools_fallback(
+        self,
+        messages: list[dict],
+        tier: str,
+        tools: list[dict],
+        timeout_seconds: int = 120,
+    ) -> tuple[dict, TokenUsage, str]:
+        """Returns (message, usage, model_used). Tries tier's model chain."""
+        models = TIER_MODELS.get(tier, TIER_MODELS["worker"])
+        last_exc: Exception | None = None
+        for model in models:
+            try:
+                message, usage = self.chat_with_tools(messages, model, tools, timeout_seconds)
+                return message, usage, model
+            except (httpx.HTTPStatusError, httpx.TimeoutException) as e:
+                last_exc = e
+                continue
+        raise RuntimeError(f"All models in tier '{tier}' failed (tools). Last: {last_exc}")

@@ -9,7 +9,7 @@ from meeseeks.parser import StructuredOutputParser
 from meeseeks.framework_prompt import FRAMEWORK_PROMPT
 from meeseeks.providers.openrouter import OpenRouterProvider
 from meeseeks.registry import Meeseeks
-from meeseeks.budget import record_run
+from meeseeks.budget import record_run, record_failure_artifact
 from meeseeks.discord_logger import log_spawn, log_complete
 
 log = logging.getLogger("meeseeks.summon")
@@ -108,6 +108,11 @@ def _summon_inline(
     log_complete(spawn_id, result.status, result.cost.cost_usd, result.duration_ms, reason=result.reason)
     if result.status != "success":
         log.warning("meeseeks %s %s failed: %s", meeseeks_cls.name, spawn_id, result.reason)
+        if result.raw_output:
+            try:
+                record_failure_artifact(spawn_id, result.raw_output)
+            except Exception:
+                pass  # artifact persistence must never crash the parent
 
     record_run(
         meeseeks_name=meeseeks_cls.name,
@@ -226,6 +231,11 @@ def _summon_subprocess(
     log_complete(spawn_id, result.status, result.cost.cost_usd, result.duration_ms, reason=result.reason)
     if result.status != "success":
         log.warning("meeseeks %s %s failed: %s", meeseeks_cls.name, spawn_id, result.reason)
+        if result.raw_output:
+            try:
+                record_failure_artifact(spawn_id, result.raw_output)
+            except Exception:
+                pass
 
     record_run(
         meeseeks_name=meeseeks_cls.name,

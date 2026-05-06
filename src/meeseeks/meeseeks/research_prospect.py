@@ -99,9 +99,9 @@ class ResearchProspectMeeseeks(Meeseeks):
             default=None,
             description="Free-form notes about data quality, gaps, or anything to surface to the user. Brief — under 200 chars.",
         )
-        sources_consulted: int = Field(
-            ge=0,
-            description="How many URLs were actually fetched. For cost/effort visibility.",
+        source_urls: list[str] = Field(
+            default_factory=list,
+            description="All URLs actually fetched during research. Populate with every URL passed to firecrawl_scrape or http_fetch. Used for hallucination guard and cost visibility.",
         )
 
     def system_prompt(self, inputs: "ResearchProspectMeeseeks.Input") -> str:
@@ -169,17 +169,26 @@ Failure handling:
 Format:
 
 Return only the structured Output schema. No preamble, no commentary,
-no "I found that..." narration. Just the data."""
+no "I found that..." narration. Just the data.
+
+IMPORTANT — source_urls field:
+Populate source_urls with EVERY URL you fetched using firecrawl_scrape
+or http_fetch, in the order fetched. This list is used by the
+hallucination guard: any activity with confidence="high" whose
+source_url is not in source_urls will be rejected. If you did not
+fetch a URL, do not assign confidence="high" to claims from it."""
 
     def validate_output(
         self,
         output: "ResearchProspectMeeseeks.Output",
         fetched_urls: set,
     ) -> str | None:
+        # Combine framework-tracked fetched_urls with LLM self-reported source_urls
+        all_known_urls = fetched_urls | set(output.source_urls)
         for activity in output.recent_activity:
             if not activity.source_url:
                 return f"hallucination_guard: activity has empty source_url: '{activity.summary[:80]}'"
-            if activity.confidence == "high" and activity.source_url not in fetched_urls:
+            if activity.confidence == "high" and activity.source_url not in all_known_urls:
                 return (
                     f"hallucination_guard: high-confidence source_url not in fetched URLs: "
                     f"{activity.source_url}"
@@ -212,5 +221,7 @@ no "I found that..." narration. Just the data."""
             lines.append(f"Hook: {primary_hook}")
         if len(output.recent_activity) > 1:
             lines.append(f"_+ {len(output.recent_activity) - 1} more findings_")
+        if output.source_urls:
+            lines.append(f"Sources: {len(output.source_urls)} URL(s) fetched")
 
         return "\n".join(lines)

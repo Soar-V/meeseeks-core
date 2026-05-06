@@ -26,6 +26,7 @@ class MeeseeksResult(BaseModel, Generic[T]):
     cost: TokenUsage = Field(default_factory=TokenUsage)
     duration_ms: int = 0
     meeseeks_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
+    raw_output: str | None = None  # raw LLM JSON on failure — for debug replay
 
     @classmethod
     def success(cls, data: T, cost: TokenUsage, duration_ms: int) -> "MeeseeksResult[T]":

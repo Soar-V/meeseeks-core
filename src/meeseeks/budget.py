@@ -41,6 +41,28 @@ def record_run(
         )
 
 
+def record_failure_artifact(meeseeks_id: str, raw_output: str) -> None:
+    """Persist raw LLM output for failed runs — enables debug replay without re-running.
+
+    Stored in a sibling table (not runs) to keep runs lean and allow
+    independent retention policy on potentially large JSON payloads.
+    """
+    with _conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS run_artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts INTEGER NOT NULL,
+                meeseeks_id TEXT NOT NULL,
+                raw_output TEXT NOT NULL
+            )
+        """)
+        conn.execute(
+            "INSERT INTO run_artifacts (ts, meeseeks_id, raw_output) VALUES (?,?,?)",
+            (int(time.time()), meeseeks_id, raw_output),
+        )
+        conn.commit()
+
+
 def today_total() -> float:
     midnight = int(time.time()) - (int(time.time()) % 86400)
     with _conn() as conn:
