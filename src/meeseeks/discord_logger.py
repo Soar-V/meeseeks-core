@@ -208,7 +208,10 @@ def log_spawn(meeseeks_id: str, name: str, tier: str, est_cost: float, inputs_re
     log_event("SPAWN", meeseeks_id, f"{name} | tier:{tier} | est:${est_cost:.3f} | {inputs_repr[:120]}")
 
 
-def log_complete(meeseeks_id: str, status: str, cost_usd: float, duration_ms: int) -> None:
+def log_complete(meeseeks_id: str, status: str, cost_usd: float, duration_ms: int, reason: str | None = None) -> None:
     """Convenience: log a COMPLETE/FAILURE/TIMEOUT event."""
     kind: EventKind = "COMPLETE" if status == "success" else ("TIMEOUT" if status == "timeout" else "FAILURE")
-    log_event(kind, meeseeks_id, f"cost:${cost_usd:.5f}, duration:{duration_ms}ms, status:{status}")
+    detail = f"cost:${cost_usd:.5f}, duration:{duration_ms}ms, status:{status}"
+    if reason and status != "success":
+        detail += f", reason:{reason}"
+    log_event(kind, meeseeks_id, detail)

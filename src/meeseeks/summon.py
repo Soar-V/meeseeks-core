@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 import time
 from typing import Type, TypeVar
 from pydantic import BaseModel
@@ -10,6 +11,8 @@ from meeseeks.providers.openrouter import OpenRouterProvider
 from meeseeks.registry import Meeseeks
 from meeseeks.budget import record_run
 from meeseeks.discord_logger import log_spawn, log_complete
+
+log = logging.getLogger("meeseeks.summon")
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -102,7 +105,9 @@ def _summon_inline(
                 result = MeeseeksResult.success(data=parsed, cost=usage, duration_ms=duration_ms)
 
     result = result.model_copy(update={"meeseeks_id": spawn_id})
-    log_complete(spawn_id, result.status, result.cost.cost_usd, result.duration_ms)
+    log_complete(spawn_id, result.status, result.cost.cost_usd, result.duration_ms, reason=result.reason)
+    if result.status != "success":
+        log.warning("meeseeks %s %s failed: %s", meeseeks_cls.name, spawn_id, result.reason)
 
     record_run(
         meeseeks_name=meeseeks_cls.name,
@@ -218,7 +223,9 @@ def _summon_subprocess(
     if result.duration_ms == 0:
         result = result.model_copy(update={"duration_ms": duration_ms})
 
-    log_complete(spawn_id, result.status, result.cost.cost_usd, result.duration_ms)
+    log_complete(spawn_id, result.status, result.cost.cost_usd, result.duration_ms, reason=result.reason)
+    if result.status != "success":
+        log.warning("meeseeks %s %s failed: %s", meeseeks_cls.name, spawn_id, result.reason)
 
     record_run(
         meeseeks_name=meeseeks_cls.name,
