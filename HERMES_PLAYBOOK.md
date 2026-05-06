@@ -89,6 +89,7 @@ Add a one-line entry when a new class of bug bites us. Keep terse. Curated, not 
 - **2026-05 — Build 17 integration tests missed Layer 1 URL routing branch.** Coverage gap in a conditional. Fix: enumerate all Layer 1 branches in test design before closing.
 - **2026-05 — meeseeks-core v0.1.0 wheel shipped hollow.** `pyproject.toml` didn't include `meeseeks/` and `toolkits/` subpackages, so installs got the framework engine but no canonical meeseeks. Fix: declare subpackages in pyproject.toml + verify from fresh-venv install.
 - **2026-05 — Hardcoded `url_research` in router Layer 1.** Fast-path bypassed the registry. Fix: defer URL-containing messages to LLM router instead of hardcoding meeseeks names. Layer 1 should set spawn priors, not pick specific meeseeks.
+- **2026-05 — Deferred wiring placeholder survived to production (Build 20).** `_spawn_fn` called `cls.Input()` with a comment "real routing in Build N." Build N shipped the router but never closed the loop. No test exercised the path with a real meeseeks. Lesson: when a comment defers work to a future build, confirm that build closed it, or grep for the placeholder string. `inputs` is now a required arg (no default) so the compiler catches the next miss.
 
 ---
 
