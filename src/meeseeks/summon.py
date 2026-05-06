@@ -90,7 +90,16 @@ def _summon_inline(
             result = MeeseeksResult.failure(reason=failure_reason or "parse failed", cost=usage)
             result = result.model_copy(update={"duration_ms": duration_ms})
         else:
-            result = MeeseeksResult.success(data=parsed, cost=usage, duration_ms=duration_ms)
+            guard_failure = meeseeks.validate_output(parsed, meeseeks.fetched_urls)
+            if guard_failure:
+                result = MeeseeksResult.failure(
+                    reason=guard_failure,
+                    partial=parsed.model_dump(),
+                    cost=usage,
+                )
+                result = result.model_copy(update={"duration_ms": duration_ms})
+            else:
+                result = MeeseeksResult.success(data=parsed, cost=usage, duration_ms=duration_ms)
 
     result = result.model_copy(update={"meeseeks_id": spawn_id})
     log_complete(spawn_id, result.status, result.cost.cost_usd, result.duration_ms)

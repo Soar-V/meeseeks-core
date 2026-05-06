@@ -31,6 +31,9 @@ class Meeseeks:
     destructive: ClassVar[bool] = False
     use_framework: ClassVar[bool] = True
 
+    def __init__(self) -> None:
+        self.fetched_urls: set[str] = set()
+
     class Input(BaseModel):
         pass
 
@@ -39,6 +42,10 @@ class Meeseeks:
 
     def system_prompt(self, inputs: "Meeseeks.Input") -> str:
         raise NotImplementedError
+
+    def validate_output(self, output: "Meeseeks.Output", fetched_urls: set) -> "str | None":
+        """Post-parse validation hook. Returns None on pass, failure reason string on fail."""
+        return None
 
     def format(self, output: "Meeseeks.Output") -> str:
         """How Hermes renders this result for Discord."""

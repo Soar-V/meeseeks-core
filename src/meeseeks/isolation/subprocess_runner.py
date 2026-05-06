@@ -56,7 +56,16 @@ def _worker_entry(
         if parsed is None:
             result = MeeseeksResult.failure(reason=failure_reason or "parse failed", cost=usage)
         else:
-            result = MeeseeksResult.success(data=parsed, cost=usage, duration_ms=duration_ms)
+            guard_failure = meeseeks.validate_output(parsed, meeseeks.fetched_urls)
+            if guard_failure:
+                result = MeeseeksResult.failure(
+                    reason=guard_failure,
+                    partial=parsed.model_dump(),
+                    cost=usage,
+                )
+                result = result.model_copy(update={"duration_ms": duration_ms})
+            else:
+                result = MeeseeksResult.success(data=parsed, cost=usage, duration_ms=duration_ms)
 
         result_queue.put(result.model_dump())
     except Exception as e:
