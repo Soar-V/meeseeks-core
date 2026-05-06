@@ -60,10 +60,10 @@ def _summon_inline(
             retval = meeseeks.run(inputs)
             if inspect.isawaitable(retval):
                 retval = asyncio.run(retval)
-            duration_ms = int((time.monotonic() - start) * 1000)
+            duration_ms = max(1, int((time.monotonic() - start) * 1000))
             result = MeeseeksResult.success(data=retval, cost=TokenUsage(), duration_ms=duration_ms)
         except Exception as exc:
-            duration_ms = int((time.monotonic() - start) * 1000)
+            duration_ms = max(1, int((time.monotonic() - start) * 1000))
             result = MeeseeksResult.failure(reason=str(exc))
             result = result.model_copy(update={"duration_ms": duration_ms})
     else:
