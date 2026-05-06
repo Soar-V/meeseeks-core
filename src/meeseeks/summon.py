@@ -45,44 +45,53 @@ def _summon_inline(
     inputs: Meeseeks.Input,
     provider: OpenRouterProvider,
 ) -> MeeseeksResult:
+    import uuid, inspect, asyncio
+
     start = time.monotonic()
     meeseeks = meeseeks_cls()
-
-    system = (FRAMEWORK_PROMPT + "\n\n" if meeseeks_cls.use_framework else "") + meeseeks.system_prompt(inputs)
-    user_msg = f"Inputs:\n{inputs.model_dump_json(indent=2)}"
-
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user_msg},
-    ]
-
-    # Generate a meeseeks_id early so it appears in SPAWN log
-    import uuid
     spawn_id = uuid.uuid4().hex[:8]
 
     log_spawn(spawn_id, meeseeks_cls.name, meeseeks_cls.tier,
               meeseeks_cls.estimated_cost_usd, inputs.model_dump_json()[:120])
 
-    parser = StructuredOutputParser(
-        schema=meeseeks_cls.Output,
-        provider=provider,
-        tier=meeseeks_cls.tier,
-    )
-
-    parsed, usage, failure_reason = parser.parse_with_retry(
-        messages, timeout_seconds=meeseeks_cls.timeout_seconds
-    )
-    duration_ms = int((time.monotonic() - start) * 1000)
-
-    if parsed is None:
-        result = MeeseeksResult.failure(
-            reason=failure_reason or "parse failed",
-            cost=usage,
-        )
+    if not meeseeks_cls.use_framework:
+        # Bypass LLM entirely — call run() directly (sync or async)
+        try:
+            retval = meeseeks.run(inputs)
+            if inspect.isawaitable(retval):
+                retval = asyncio.run(retval)
+            duration_ms = int((time.monotonic() - start) * 1000)
+            result = MeeseeksResult.success(data=retval, cost=TokenUsage(), duration_ms=duration_ms)
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            result = MeeseeksResult.failure(reason=str(exc))
+            result = result.model_copy(update={"duration_ms": duration_ms})
     else:
-        result = MeeseeksResult.success(data=parsed, cost=usage, duration_ms=duration_ms)
+        system = FRAMEWORK_PROMPT + "\n\n" + meeseeks.system_prompt(inputs)
+        user_msg = f"Inputs:\n{inputs.model_dump_json(indent=2)}"
 
-    # Stamp spawn_id onto result so budget + logs share the same ID
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ]
+
+        parser = StructuredOutputParser(
+            schema=meeseeks_cls.Output,
+            provider=provider,
+            tier=meeseeks_cls.tier,
+        )
+
+        parsed, usage, failure_reason = parser.parse_with_retry(
+            messages, timeout_seconds=meeseeks_cls.timeout_seconds
+        )
+        duration_ms = int((time.monotonic() - start) * 1000)
+
+        if parsed is None:
+            result = MeeseeksResult.failure(reason=failure_reason or "parse failed", cost=usage)
+            result = result.model_copy(update={"duration_ms": duration_ms})
+        else:
+            result = MeeseeksResult.success(data=parsed, cost=usage, duration_ms=duration_ms)
+
     result = result.model_copy(update={"meeseeks_id": spawn_id})
     log_complete(spawn_id, result.status, result.cost.cost_usd, result.duration_ms)
 
@@ -195,9 +204,9 @@ def _summon_subprocess(
     finally:
         sem.release()   # always returns slot — no leak on timeout, crash, or signal
 
-    # Stamp spawn_id + duration
+    # Stamp spawn_id + duration (use parent wall-clock when child reported 0)
     result = result.model_copy(update={"meeseeks_id": spawn_id})
-    if result.status == "success" and result.duration_ms == 0:
+    if result.duration_ms == 0:
         result = result.model_copy(update={"duration_ms": duration_ms})
 
     log_complete(spawn_id, result.status, result.cost.cost_usd, result.duration_ms)
